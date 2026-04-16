@@ -1,0 +1,12 @@
+{
+  "columns": [
+    "order_id",
+    "order_date",
+    "region",
+    "customer_id",
+    "product_id",
+    "quantity",
+    "unit_price",
+    "sales_rep"
+  ]
+}

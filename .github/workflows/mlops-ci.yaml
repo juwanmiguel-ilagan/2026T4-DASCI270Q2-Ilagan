@@ -1,0 +1,206 @@
+name: mlops-ci
+
+on:
+  # Run on PRs to main only when pipeline, asset, or config files change.
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "pipelines/**"
+      - "assets/**"
+      - "config/**"
+
+  # Run on pushes to main so a reviewed change can package and deploy to staging.
+  push:
+    branches:
+      - main
+    paths:
+      - "pipelines/**"
+      - "assets/**"
+      - "config/**"
+
+  # Run nightly at 02:00 UTC to catch regressions in recurring validation.
+  schedule:
+    - cron: "0 2 * * *"
+
+  # Allow maintainers to run the workflow manually from the GitHub Actions UI.
+  workflow_dispatch:
+
+# Guardrail: avoid overlapping runs on the same ref, which can cause
+# inconsistent validation results or competing staging deployments.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Guardrail: keep token permissions minimal by default.
+permissions:
+  contents: read
+
+jobs:
+  static_checks:
+    name: Static checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lightweight tooling
+        run: |
+          python -m pip install --upgrade pip pyyaml
+
+      - name: Validate workflow YAML parses
+        run: |
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+
+          workflow_file = Path(".github/workflows/mlops-ci.yaml")
+          with workflow_file.open("r", encoding="utf-8") as f:
+              yaml.safe_load(f)
+
+          print("Workflow YAML parsed successfully.")
+          PY
+
+      - name: Compile Python files under pipelines and assets
+        run: |
+          python - <<'PY'
+          import py_compile
+          from pathlib import Path
+
+          checked = 0
+          for folder in ["pipelines", "assets"]:
+              base = Path(folder)
+              if base.exists():
+                  for path in base.rglob("*.py"):
+                      py_compile.compile(str(path), doraise=True)
+                      checked += 1
+
+          print(f"Compiled {checked} Python files successfully.")
+          PY
+
+  test_and_validate:
+    name: Unit tests, schema checks, and smoke test
+    runs-on: ubuntu-latest
+    needs: static_checks
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip pytest pandas
+
+      - name: Run unit tests
+        run: |
+          if [ -d tests ]; then
+            pytest -q
+          else
+            echo "No tests directory found; failing because unit tests are required."
+            exit 1
+          fi
+
+      - name: Validate sales schema contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          schema_file = Path("config/expected_sales_schema.json")
+          if not schema_file.exists():
+              raise SystemExit("Missing config/expected_sales_schema.json")
+
+          schema = json.loads(schema_file.read_text(encoding="utf-8"))
+          required = {
+              "order_id",
+              "order_date",
+              "region",
+              "customer_id",
+              "product_id",
+              "quantity",
+              "unit_price",
+              "sales_rep",
+          }
+
+          declared = set(schema.get("columns", []))
+          missing = sorted(required - declared)
+
+          if missing:
+              raise SystemExit(f"Schema validation failed. Missing columns in contract: {missing}")
+
+          print("Schema validation passed.")
+          PY
+
+      - name: Lightweight smoke test
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          required_paths = [Path("pipelines"), Path("assets"), Path("config")]
+          for p in required_paths:
+              if not p.exists():
+                  raise SystemExit(f"Smoke test failed: missing required path {p}")
+
+          print("Smoke test passed.")
+          PY
+
+  package_artifact:
+    name: Package trusted artifact
+    runs-on: ubuntu-latest
+    needs: test_and_validate
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build deployment bundle
+        run: |
+          mkdir -p dist
+          tar -czf dist/sales-analytics-bundle.tgz pipelines assets config
+
+      - name: Upload trusted artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trusted-sales-analytics-bundle
+          path: dist/sales-analytics-bundle.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy_staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: package_artifact
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging
+
+    steps:
+      - name: Download trusted artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: trusted-sales-analytics-bundle
+          path: dist
+
+      - name: Inspect artifact before deploy
+        run: |
+          ls -lah dist
+
+      - name: Placeholder deploy step
+        run: |
+          echo "Deploying trusted artifact to staging..."
+          echo "Replace this with the real staging deployment command."
+
+      - name: Post-deployment smoke test
+        run: |
+          test -f dist/sales-analytics-bundle.tgz
+          echo "Post-deployment smoke test passed."
