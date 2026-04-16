@@ -19,17 +19,12 @@ REQUIRED_COLUMNS = [
 @dg.asset
 def raw_sales(context: dg.AssetExecutionContext, sales_io: SalesIO) -> pd.DataFrame:
     context.log.info(f"Reading CSV from: {sales_io.source_csv}")
-
     df = sales_io.read_sales_csv()
     context.log.info(f"Columns read: {df.columns.tolist()}")
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
-        raise dg.Failure(
-            f"Reading CSV from: {sales_io.source_csv} | "
-            f"Columns read: {df.columns.tolist()} | "
-            f"Missing required columns: {missing}"
-        )
+        raise dg.Failure(f"Missing required columns: {missing}")
 
     return df
 
@@ -38,20 +33,33 @@ def raw_sales(context: dg.AssetExecutionContext, sales_io: SalesIO) -> pd.DataFr
 def clean_sales(raw_sales: pd.DataFrame, sales_io: SalesIO) -> pd.DataFrame:
     df = raw_sales.copy()
 
-    df = df.drop_duplicates(subset=["order_id"])
-
-    df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
-    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
-    df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce")
-
+    # Standardize text fields first
+    df["order_id"] = df["order_id"].astype(str).str.strip()
     df["region"] = df["region"].fillna("UNKNOWN").astype(str).str.strip().str.upper()
     df["customer_id"] = df["customer_id"].fillna("UNKNOWN").astype(str).str.strip()
     df["product_id"] = df["product_id"].fillna("UNKNOWN").astype(str).str.strip()
     df["sales_rep"] = df["sales_rep"].fillna("UNKNOWN").astype(str).str.strip()
 
-    df = df.dropna(subset=["order_date", "quantity", "unit_price"])
-    df = df[(df["quantity"] > 0) & (df["unit_price"] >= 0)]
+    # Convert types
+    df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+    df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce")
 
+    # Remove rows with blank or missing order_id
+    df = df[df["order_id"].notna()]
+    df = df[df["order_id"] != ""]
+    df = df[df["order_id"].str.upper() != "NAN"]
+
+    # Remove duplicate transactions by order_id
+    df = df.drop_duplicates(subset=["order_id"])
+
+    # Remove rows missing critical numeric/date fields
+    df = df.dropna(subset=["order_date", "quantity", "unit_price"])
+
+    # Remove invalid numeric rows
+    df = df[(df["quantity"] > 0) & (df["unit_price"] > 0)]
+
+    # Derived metric
     df["sales_amount"] = df["quantity"] * df["unit_price"]
 
     sales_io.write_csv("clean_sales", df)
@@ -92,9 +100,7 @@ def daily_metrics(
     metrics = pd.DataFrame(
         [
             {
-                "metric_date": clean_sales["order_date"].dt.date.max()
-                if not clean_sales.empty
-                else None,
+                "metric_date": clean_sales["order_date"].dt.date.max() if not clean_sales.empty else None,
                 "total_sales": float(clean_sales["sales_amount"].sum()),
                 "total_orders": int(clean_sales["order_id"].nunique()),
                 "unique_customers": int(clean_sales["customer_id"].nunique()),
@@ -112,14 +118,16 @@ def daily_metrics(
 @dg.asset_check(asset="clean_sales")
 def clean_sales_quality_check(clean_sales: pd.DataFrame) -> dg.AssetCheckResult:
     duplicate_orders = int(clean_sales["order_id"].duplicated().sum())
+    blank_order_ids = int((clean_sales["order_id"].astype(str).str.strip() == "").sum())
     null_dates = int(clean_sales["order_date"].isna().sum())
     invalid_qty = int((clean_sales["quantity"] <= 0).sum())
-    invalid_price = int((clean_sales["unit_price"] < 0).sum())
-    invalid_sales = int((clean_sales["sales_amount"] < 0).sum())
+    invalid_price = int((clean_sales["unit_price"] <= 0).sum())
+    invalid_sales = int((clean_sales["sales_amount"] <= 0).sum())
 
     passed = (
         len(clean_sales) > 0
         and duplicate_orders == 0
+        and blank_order_ids == 0
         and null_dates == 0
         and invalid_qty == 0
         and invalid_price == 0
@@ -131,6 +139,7 @@ def clean_sales_quality_check(clean_sales: pd.DataFrame) -> dg.AssetCheckResult:
         metadata={
             "row_count": int(len(clean_sales)),
             "duplicate_orders": duplicate_orders,
+            "blank_order_ids": blank_order_ids,
             "null_dates": null_dates,
             "invalid_qty": invalid_qty,
             "invalid_price": invalid_price,
@@ -141,6 +150,14 @@ def clean_sales_quality_check(clean_sales: pd.DataFrame) -> dg.AssetCheckResult:
 
 @dg.asset_check(asset="daily_metrics")
 def daily_metrics_business_rule_check(daily_metrics: pd.DataFrame) -> dg.AssetCheckResult:
+    row_count = int(len(daily_metrics))
+
+    if row_count != 1:
+        return dg.AssetCheckResult(
+            passed=False,
+            metadata={"row_count": row_count}
+        )
+
     row = daily_metrics.iloc[0]
 
     total_sales = float(row["total_sales"])
@@ -149,16 +166,17 @@ def daily_metrics_business_rule_check(daily_metrics: pd.DataFrame) -> dg.AssetCh
     top_region = str(row["top_region_by_sales"])
 
     passed = (
-        total_sales >= 0
+        total_sales > 0
         and total_orders >= 0
         and unique_customers >= 0
-        and ((unique_customers <= total_orders) if total_orders > 0 else unique_customers == 0)
-        and ((top_region not in {"", "NAN"}) if total_orders > 0 else True)
+        and unique_customers <= total_orders
+        and top_region not in {"", "NAN", "UNKNOWN"}
     )
 
     return dg.AssetCheckResult(
         passed=passed,
         metadata={
+            "row_count": row_count,
             "total_sales": total_sales,
             "total_orders": total_orders,
             "unique_customers": unique_customers,

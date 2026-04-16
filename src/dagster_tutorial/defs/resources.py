@@ -5,6 +5,9 @@ import dagster as dg
 import pandas as pd
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
 class SalesIO(dg.ConfigurableResource):
     source_csv: str
     output_dir: str
@@ -37,8 +40,8 @@ def resources():
     return dg.Definitions(
         resources={
             "sales_io": SalesIO(
-                source_csv=r"C:\Users\NOBLEVISION\dagster-tutorial\src\data\sales_2026_04_14.csv",
-                output_dir=r"C:\Users\NOBLEVISION\dagster-tutorial\src\data\outputs",
+                source_csv=str(PROJECT_ROOT / "src" / "data" / "sales_2026_04_14.csv"),
+                output_dir=str(PROJECT_ROOT / "src" / "data" / "outputs"),
             )
         }
     )
