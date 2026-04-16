@@ -49,6 +49,11 @@ def clean_sales(raw_sales: pd.DataFrame, sales_io: SalesIO) -> pd.DataFrame:
     df = df[df["order_id"].notna()]
     df = df[df["order_id"] != ""]
     df = df[df["order_id"].str.upper() != "NAN"]
+    
+    df["order_id"] = df["order_id"].astype(str).str.strip()
+    df = df[df["order_id"].notna()]
+    df = df[df["order_id"] != ""]
+    df = df[df["order_id"].str.upper() != "NAN"]
 
     # Remove duplicate transactions by order_id
     df = df.drop_duplicates(subset=["order_id"])
