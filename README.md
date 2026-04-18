@@ -17,7 +17,7 @@ For Part A, I built a Dagster asset-based pipeline that reads daily sales data f
 
 The input CSV file used by the pipeline is:
 
-Assets
+### Assets
 
 The pipeline contains four assets:
 
@@ -27,7 +27,7 @@ sales_by_region – aggregates the cleaned sales data by region and computes sum
 daily_metrics – produces one final daily summary output containing KPIs such as total sales, total orders, unique customers, and top region by sales
 Asset Dependency Flow
 
-The dependency chain is:
+### The dependency chain is:
 
 clean_sales depends on raw_sales
 sales_by_region depends on clean_sales
@@ -42,36 +42,29 @@ reading the input CSV
 writing output files such as cleaned sales data, regional summaries, and daily metrics
 Asset Checks
 
-Two asset checks are included:
+### Two asset checks are included:
 
 clean_sales_quality_check – validates the quality of the cleaned data
 daily_metrics_business_rule_check – validates that the final KPI output is logically correct
 Automation
 
-A daily schedule is used for pipeline automation.
-
+### A daily schedule is used for pipeline automation.
 A schedule was chosen because this is a daily reporting pipeline with a fixed cadence, so a time-based trigger is more appropriate than a sensor.
 
-Main Part A Files
+### Main Part A Files
 src/dagster_tutorial/defs/assets.py
 src/dagster_tutorial/defs/resources.py
 src/dagster_tutorial/defs/schedules.py
 src/dagster_tutorial/definitions.py
 
 
-```text
-src/data/sales_2026_04_14.csv
-
-
-
 Part B – GitHub Actions CI/CD Workflow
 
 For Part B, I created a GitHub Actions workflow to make the ML pipeline safer and more reliable. The workflow is designed to reduce the risk of schema changes breaking the nightly batch job and bad artifacts being promoted to staging without enough validation.
 
-Workflow File
+### Workflow File
 
 The workflow file is located at:
-
 .github/workflows/mlops-ci.yaml
 Workflow Triggers
 
@@ -82,7 +75,7 @@ Nightly schedule at 2:00 AM
 Manual execution from the GitHub Actions UI using workflow_dispatch
 Workflow Jobs
 
-The workflow includes the following jobs:
+### The workflow includes the following jobs:
 
 static_checks – runs fast checks before deeper validation
 test_and_validate – runs unit tests, schema/data validation, and a lightweight smoke test
@@ -90,14 +83,14 @@ package_artifact – builds and uploads one trusted artifact for later deploymen
 deploy_staging – deploys only after packaging succeeds, only on push to main, and uses environment: staging; it also includes a placeholder deploy step and a post-deployment smoke test
 Guardrails
 
-The workflow includes CI/CD guardrails such as:
+### The workflow includes CI/CD guardrails such as:
 
 concurrency control to avoid overlapping runs
 minimal permissions by default
 
-These help reduce common CI/CD risks and make the workflow safer.
+### These help reduce common CI/CD risks and make the workflow safer.
 
-Part B Support Files
+### Part B Support Files
 .github/workflows/mlops-ci.yaml
 config/expected_sales_schema.json
 pipelines/README.md
