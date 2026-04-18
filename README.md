@@ -58,7 +58,7 @@ src/dagster_tutorial/defs/schedules.py
 src/dagster_tutorial/definitions.py
 
 
-Part B – GitHub Actions CI/CD Workflow
+## Part B – GitHub Actions CI/CD Workflow
 
 For Part B, I created a GitHub Actions workflow to make the ML pipeline safer and more reliable. The workflow is designed to reduce the risk of schema changes breaking the nightly batch job and bad artifacts being promoted to staging without enough validation.
 
